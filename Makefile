@@ -56,16 +56,25 @@ status: ## 📈 Show service status
 
 ##@ Data Generation
 
-inject: ## 💉 Inject demo data (5 events/sec)
+inject: ## 💉 Start data injection (auto-starts at 5 events/sec)
 	@echo "$(BLUE)💉 Starting data injection (5 events/sec)...$(NC)"
-	@echo "$(YELLOW)⚠️  Press Ctrl+C to stop$(NC)"
-	@docker run --rm --network risingwave_casino-net \
-		-v $(PWD)/data-generator/casino_events_generator.py:/app/casino_events_generator.py:ro \
-		python:3.11-slim sh -c "pip install -q kafka-python && python /app/casino_events_generator.py --mode kafka --rate 5 --broker redpanda:9092"
+	@echo "$(YELLOW)Note: Generator auto-starts on container startup. Only use this if you stopped it manually.$(NC)"
+	@curl -s -X POST http://localhost:8000/start | jq '.' || echo "Error: Make sure data-generator service is running"
 
-inject-fast: ## ⚡ Inject data faster (10 events/sec)
-	@echo "$(BLUE)⚡ Starting FAST data injection (10 events/sec)...$(NC)"
-	@echo "$(YELLOW)⚠️  Press Ctrl+C to stop$(NC)"
-	@docker run --rm --network risingwave_casino-net \
-		-v $(PWD)/data-generator/casino_events_generator.py:/app/casino_events_generator.py:ro \
-		python:3.11-slim sh -c "pip install -q kafka-python && python /app/casino_events_generator.py --mode kafka --rate 10 --broker redpanda:9092"
+inject-fast: ## ⚡ Increase rate to 10 events/sec
+	@echo "$(BLUE)⚡ Increasing to 10 events/sec...$(NC)"
+	@curl -s http://localhost:8000/rate/10 | jq '.' || echo "Error: Make sure data-generator service is running"
+
+inject-slow: ## 🐌 Decrease rate to 2 events/sec
+	@echo "$(BLUE)🐌 Decreasing to 2 events/sec...$(NC)"
+	@curl -s http://localhost:8000/rate/2 | jq '.' || echo "Error: Make sure data-generator service is running"
+
+inject-rate: ## 📊 Get current event generation rate
+	@curl -s http://localhost:8000/rate | jq '.' || echo "Error: Make sure data-generator service is running"
+
+inject-stop: ## 🛑 Stop data injection
+	@echo "$(RED)🛑 Stopping data injection...$(NC)"
+	@curl -s -X POST http://localhost:8000/stop | jq '.' || echo "Error: Make sure data-generator service is running"
+
+inject-status: ## 📊 Check data injection status
+	@curl -s http://localhost:8000/status | jq '.' || echo "Error: Make sure data-generator service is running"

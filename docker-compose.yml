@@ -26,26 +26,12 @@ services:
     networks:
       - casino-net
 
-  # Init container to create Kafka topics
-  redpanda-init:
-    image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
-    container_name: redpanda-init
-    depends_on:
-      - redpanda
-    networks:
-      - casino-net
-    volumes:
-      - ./redpanda/init-redpanda.sh:/init-redpanda.sh:ro
-    entrypoint: ["/bin/bash", "/init-redpanda.sh"]
-    restart: "no"
-
   # Redpanda Console - Web UI for Redpanda
   console:
     image: docker.redpanda.com/redpandadata/console:v2.7.0
     container_name: redpanda-console
     depends_on:
       - redpanda
-      - redpanda-init
     ports:
       - "8080:8080"
     environment:
@@ -61,7 +47,7 @@ services:
     container_name: risingwave
     command:
       - standalone
-      - --meta-opts=--listen-addr 0.0.0.0:5690 --advertise-addr risingwave:5690 --backend mem --state-store hummock+memory --data-directory hummock_001
+      - --meta-opts=--listen-addr 0.0.0.0:5690 --advertise-addr 0.0.0.0:5690 --backend mem --state-store hummock+memory --data-directory hummock_001
       - --frontend-opts=--listen-addr 0.0.0.0:4566
       - --compute-opts=
       - --compactor-opts=
@@ -74,21 +60,6 @@ services:
       - casino-net
     depends_on:
       - redpanda
-
-  # Init container to set up RisingWave schema
-  risingwave-init:
-    image: postgres:16-alpine
-    container_name: risingwave-init
-    depends_on:
-      - risingwave
-      - redpanda-init
-    networks:
-      - casino-net
-    volumes:
-      - ./risingwave/init-risingwave.sh:/init-risingwave.sh:ro
-      - ./risingwave/setup_risingwave.sql:/app/setup_risingwave.sql:ro
-    entrypoint: ["/bin/sh", "/init-risingwave.sh"]
-    restart: "no"
 
   # Streamlit Dashboard
   streamlit:
@@ -105,23 +76,21 @@ services:
       RISINGWAVE_DB: dev
     depends_on:
       - risingwave
-      - risingwave-init
-    volumes:
-      - ./streamlit/streamlit_app.py:/app/streamlit_app.py
-      - ./risingwave/setup_risingwave.sql:/app/setup_risingwave.sql
     networks:
       - casino-net
     restart: unless-stopped
 
-  # Data Generator - Generates casino gaming transactions to Kafka
+  # Data Generator - FastAPI service for transaction generation
   data-generator:
     build:
       context: ./data-generator
       dockerfile: Dockerfile
     container_name: casino-data-generator
+    ports:
+      - "8000:8000"  # FastAPI port
     depends_on:
       - redpanda
-      - redpanda-init
+      - risingwave
     networks:
       - casino-net
     environment:
