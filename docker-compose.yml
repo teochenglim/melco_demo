@@ -1,0 +1,133 @@
+services:
+  # Redpanda - Kafka-compatible streaming platform
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
+    container_name: redpanda
+    command:
+      - redpanda
+      - start
+      - --smp 1
+      - --memory 1G
+      - --reserve-memory 0M
+      - --overprovisioned
+      - --node-id 0
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+    ports:
+      - "19092:19092"  # Kafka API (external)
+      - "18081:18081"  # Schema Registry (external)
+      - "18082:18082"  # Pandaproxy (external)
+      - "9644:9644"    # Prometheus metrics
+    networks:
+      - casino-net
+
+  # Init container to create Kafka topics
+  redpanda-init:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.4
+    container_name: redpanda-init
+    depends_on:
+      - redpanda
+    networks:
+      - casino-net
+    volumes:
+      - ./redpanda/init-redpanda.sh:/init-redpanda.sh:ro
+    entrypoint: ["/bin/bash", "/init-redpanda.sh"]
+    restart: "no"
+
+  # Redpanda Console - Web UI for Redpanda
+  console:
+    image: docker.redpanda.com/redpandadata/console:v2.7.0
+    container_name: redpanda-console
+    depends_on:
+      - redpanda
+      - redpanda-init
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_SCHEMAREGISTRY_ENABLED: "true"
+      KAFKA_SCHEMAREGISTRY_URLS: http://redpanda:8081
+    networks:
+      - casino-net
+
+  # RisingWave - Stream processing database
+  risingwave:
+    image: risingwavelabs/risingwave:v2.5.0
+    container_name: risingwave
+    command:
+      - standalone
+      - --meta-opts=--listen-addr 0.0.0.0:5690 --advertise-addr risingwave:5690 --backend mem --state-store hummock+memory --data-directory hummock_001
+      - --frontend-opts=--listen-addr 0.0.0.0:4566
+      - --compute-opts=
+      - --compactor-opts=
+    ports:
+      - "4566:4566"  # PostgreSQL protocol
+      - "5691:5691"  # RisingWave metrics
+    environment:
+      RUST_BACKTRACE: "1"
+    networks:
+      - casino-net
+    depends_on:
+      - redpanda
+
+  # Init container to set up RisingWave schema
+  risingwave-init:
+    image: postgres:16-alpine
+    container_name: risingwave-init
+    depends_on:
+      - risingwave
+      - redpanda-init
+    networks:
+      - casino-net
+    volumes:
+      - ./risingwave/init-risingwave.sh:/init-risingwave.sh:ro
+      - ./risingwave/setup_risingwave.sql:/app/setup_risingwave.sql:ro
+    entrypoint: ["/bin/sh", "/init-risingwave.sh"]
+    restart: "no"
+
+  # Streamlit Dashboard
+  streamlit:
+    build:
+      context: ./streamlit
+      dockerfile: Dockerfile
+    container_name: streamlit-dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      RISINGWAVE_HOST: risingwave
+      RISINGWAVE_PORT: 4566
+      RISINGWAVE_USER: root
+      RISINGWAVE_DB: dev
+    depends_on:
+      - risingwave
+      - risingwave-init
+    volumes:
+      - ./streamlit/streamlit_app.py:/app/streamlit_app.py
+      - ./risingwave/setup_risingwave.sql:/app/setup_risingwave.sql
+    networks:
+      - casino-net
+    restart: unless-stopped
+
+  # Data Generator - Generates casino gaming transactions to Kafka
+  data-generator:
+    build:
+      context: ./data-generator
+      dockerfile: Dockerfile
+    container_name: casino-data-generator
+    depends_on:
+      - redpanda
+      - redpanda-init
+    networks:
+      - casino-net
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+networks:
+  casino-net:
+    driver: bridge

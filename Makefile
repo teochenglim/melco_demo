@@ -1,0 +1,71 @@
+.PHONY: help demo start stop restart logs clean check
+
+# Default target - show help
+.DEFAULT_GOAL := help
+
+# Colors
+BLUE := \033[0;34m
+GREEN := \033[0;32m
+YELLOW := \033[1;33m
+RED := \033[0;31m
+NC := \033[0m
+
+##@ Quick Start
+
+demo: ## 🎬 Run the complete demo (recommended!)
+	@./scripts/run-demo.sh
+
+help: ## 📖 Show this help message
+	@echo "$(BLUE)🎰 Casino Gaming Loyalty Demo$(NC)"
+	@echo "$(GREEN)━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━$(NC)"
+	@awk 'BEGIN {FS = ":.*##"; printf "\n$(YELLOW)Usage:$(NC) make $(BLUE)<target>$(NC)\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  $(BLUE)%-15s$(NC) %s\n", $$1, $$2 } /^##@/ { printf "\n$(GREEN)%s$(NC)\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
+	@echo ""
+	@echo "$(YELLOW)💡 First time? Just run:$(NC) make demo"
+	@echo ""
+
+##@ Basic Commands
+
+start: ## 🚀 Start all services
+	@./scripts/run-demo.sh status || docker-compose up -d
+
+stop: ## 🛑 Stop all services
+	@./scripts/run-demo.sh stop
+
+restart: ## 🔄 Restart all services
+	@./scripts/run-demo.sh restart
+
+clean: ## 🧹 Remove everything (containers + volumes)
+	@./scripts/run-demo.sh clean
+
+check: ## 🔍 Check system health
+	@./scripts/check-demo.sh
+
+logs: ## 📜 Show all logs
+	@docker-compose logs -f
+
+##@ Monitoring
+
+dashboard: ## 🎰 Open Streamlit dashboard
+	@open http://localhost:8501 2>/dev/null || xdg-open http://localhost:8501 2>/dev/null || echo "Open http://localhost:8501"
+
+console: ## 📊 Open Redpanda Console
+	@open http://localhost:8080 2>/dev/null || xdg-open http://localhost:8080 2>/dev/null || echo "Open http://localhost:8080"
+
+status: ## 📈 Show service status
+	@docker-compose ps
+
+##@ Data Generation
+
+inject: ## 💉 Inject demo data (5 events/sec)
+	@echo "$(BLUE)💉 Starting data injection (5 events/sec)...$(NC)"
+	@echo "$(YELLOW)⚠️  Press Ctrl+C to stop$(NC)"
+	@docker run --rm --network risingwave_casino-net \
+		-v $(PWD)/data-generator/casino_events_generator.py:/app/casino_events_generator.py:ro \
+		python:3.11-slim sh -c "pip install -q kafka-python && python /app/casino_events_generator.py --mode kafka --rate 5 --broker redpanda:9092"
+
+inject-fast: ## ⚡ Inject data faster (10 events/sec)
+	@echo "$(BLUE)⚡ Starting FAST data injection (10 events/sec)...$(NC)"
+	@echo "$(YELLOW)⚠️  Press Ctrl+C to stop$(NC)"
+	@docker run --rm --network risingwave_casino-net \
+		-v $(PWD)/data-generator/casino_events_generator.py:/app/casino_events_generator.py:ro \
+		python:3.11-slim sh -c "pip install -q kafka-python && python /app/casino_events_generator.py --mode kafka --rate 10 --broker redpanda:9092"
