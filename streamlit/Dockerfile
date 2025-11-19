@@ -12,12 +12,8 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application files
-COPY streamlit_app.py .
-COPY entrypoint.sh .
-
-# Make entrypoint executable
-RUN chmod +x entrypoint.sh
+# Copy application files (modular structure)
+COPY . .
 
 # Expose Streamlit port
 EXPOSE 8501

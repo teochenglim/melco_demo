@@ -83,25 +83,28 @@ start_services() {
     print_success "All services started"
 }
 
-setup_kafka() {
-    print_step "Creating Kafka topic..."
-    sleep 3
+wait_for_init() {
+    print_step "Waiting for initialization (data-generator handles Kafka topic + RisingWave schema)..."
 
-    docker exec redpanda rpk topic create gaming-transactions \
-        --brokers=localhost:9092 \
-        --partitions=3 \
-        --replicas=1 2>/dev/null || true
+    # Wait for data-generator to be healthy (it runs init then starts API)
+    local max_attempts=60
+    local attempt=1
 
-    print_success "Kafka topic created"
-}
+    while [ $attempt -le $max_attempts ]; do
+        if curl -s http://localhost:8000/health 2>/dev/null | grep -q "ok" || \
+           curl -s http://localhost:8000/status 2>/dev/null | grep -q "running"; then
+            print_success "All services initialized and ready"
+            return 0
+        fi
+        echo -n "."
+        sleep 2
+        attempt=$((attempt + 1))
+    done
 
-setup_risingwave() {
-    print_step "Waiting for RisingWave schema initialization..."
-    sleep 5
-
-    # Schema is automatically initialized by risingwave-init container and streamlit entrypoint
-    # Just wait for it to complete
-    print_success "RisingWave schema initialized by init containers"
+    print_error "Timeout waiting for initialization"
+    echo "Data generator logs:"
+    docker logs casino-data-generator --tail 50
+    return 1
 }
 
 start_streamlit() {
@@ -155,10 +158,31 @@ inject_data() {
     echo -e "${YELLOW}⚠️  Press Ctrl+C to stop${NC}"
     echo ""
 
-    # Run generator in container (no local Python dependencies needed!)
-    docker run --rm --network risingwave_casino-net \
-        -v "$(pwd)/data-generator/casino_events_generator.py:/app/casino_events_generator.py:ro" \
-        python:3.11-slim sh -c "pip install -q kafka-python && python /app/casino_events_generator.py --mode kafka --rate 5 --broker redpanda:9092"
+    # Wait for data generator to auto-start (FastAPI auto-starts at 5 events/sec)
+    print_step "Waiting for data generator to auto-start..."
+    sleep 5
+
+    # Verify generator is running via REST API
+    if curl -s http://localhost:8000/status | grep -q '"running":true'; then
+        print_success "Data generator is running at 5 events/sec (auto-started)"
+    else
+        print_error "Data generator not running. Attempting manual start..."
+        curl -s -X POST http://localhost:8000/start | jq '.' || echo "Failed to start generator"
+    fi
+
+    echo ""
+    echo -e "${BLUE}To control the generator:${NC}"
+    echo -e "  ${YELLOW}make inject-rate${NC}   - Check current rate"
+    echo -e "  ${YELLOW}make inject-fast${NC}   - Increase to 10 events/sec"
+    echo -e "  ${YELLOW}make inject-slow${NC}   - Decrease to 2 events/sec"
+    echo -e "  ${YELLOW}make inject-stop${NC}   - Stop generation"
+    echo ""
+    echo -e "${GREEN}Press Ctrl+C to exit this script (generator will keep running)${NC}"
+
+    # Keep script running to show status
+    while true; do
+        sleep 30
+    done
 }
 
 cleanup() {
@@ -219,8 +243,7 @@ main() {
     # Execute setup steps
     check_prerequisites
     start_services
-    setup_kafka
-    setup_risingwave
+    wait_for_init
     start_streamlit
     sleep 2
     show_status
